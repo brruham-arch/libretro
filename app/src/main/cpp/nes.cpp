@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <mutex>
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int8_t s8;
 
 // ---------- Cartridge / mapper (0,1,2,3,7) ----------
@@ -327,8 +328,52 @@ static int cpuStep(){
 }
 
 // ---------- Frame ----------
+// ---------- Cheat ----------
+static std::mutex mx;
+static u8 snap[2048]; static bool cand[2048]; static bool snapOk=false;
+struct Frz{ u16 a; u8 v; };
+static std::vector<Frz> frz;
+static void applyFreeze(){ for(size_t i=0;i<frz.size();i++) ram[frz[i].a]=frz[i].v; }
+static void cheatClear(){ snapOk=false; frz.clear(); memset(cand,0,sizeof cand); }
+extern "C" {
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_searchReset(JNIEnv*,jclass){
+  std::lock_guard<std::mutex> l(mx); memcpy(snap,ram,2048);
+  for(int i=0;i<2048;i++) cand[i]=true; snapOk=true; }
+JNIEXPORT jint JNICALL Java_com_brruham_nes_NesCore_searchFilter(JNIEnv*,jclass,jint mode,jint val){
+  std::lock_guard<std::mutex> l(mx); if(!snapOk) return -1; int n=0;
+  for(int i=0;i<2048;i++){
+    if(!cand[i]) continue;
+    u8 c=ram[i], p=snap[i]; bool ok;
+    switch(mode){ case 0: ok=(c==(u8)val); break; case 1: ok=(c!=p); break; case 2: ok=(c==p); break; case 3: ok=(c>p); break; default: ok=(c<p); }
+    cand[i]=ok; if(ok) n++;
+  }
+  memcpy(snap,ram,2048); return n; }
+JNIEXPORT jint JNICALL Java_com_brruham_nes_NesCore_searchCount(JNIEnv*,jclass){
+  std::lock_guard<std::mutex> l(mx); if(!snapOk) return -1; int n=0;
+  for(int i=0;i<2048;i++) if(cand[i]) n++; return n; }
+JNIEXPORT jintArray JNICALL Java_com_brruham_nes_NesCore_searchGet(JNIEnv* env,jclass,jint mx_){
+  std::lock_guard<std::mutex> l(mx); std::vector<jint> o;
+  for(int i=0;i<2048 && (int)o.size()<mx_;i++) if(snapOk && cand[i]) o.push_back((i<<8)|ram[i]);
+  jintArray r=env->NewIntArray((jsize)o.size());
+  if(!o.empty()) env->SetIntArrayRegion(r,0,(jsize)o.size(),o.data());
+  return r; }
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_poke(JNIEnv*,jclass,jint a,jint v){
+  std::lock_guard<std::mutex> l(mx); if(a>=0&&a<2048) ram[a]=(u8)v; }
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_freeze(JNIEnv*,jclass,jint a,jint v,jboolean on){
+  std::lock_guard<std::mutex> l(mx);
+  for(size_t i=0;i<frz.size();){ if(frz[i].a==a) frz.erase(frz.begin()+i); else i++; }
+  if(on && a>=0 && a<2048){ Frz f; f.a=(u16)a; f.v=(u8)v; frz.push_back(f); } }
+JNIEXPORT jintArray JNICALL Java_com_brruham_nes_NesCore_freezeGet(JNIEnv* env,jclass){
+  std::lock_guard<std::mutex> l(mx); std::vector<jint> o;
+  for(size_t i=0;i<frz.size();i++) o.push_back((frz[i].a<<8)|frz[i].v);
+  jintArray r=env->NewIntArray((jsize)o.size());
+  if(!o.empty()) env->SetIntArrayRegion(r,0,(jsize)o.size(),o.data());
+  return r; }
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_freezeClear(JNIEnv*,jclass){
+  std::lock_guard<std::mutex> l(mx); frz.clear(); }
+}
 static int dotBudget=0;
-static void runDots(int n){ dotBudget+=n; while(dotBudget>0) dotBudget-=3*cpuStep(); }
+static void runDots(int n){ dotBudget+=n; while(dotBudget>0){ dotBudget-=3*cpuStep(); applyFreeze(); } }
 static void emuFrame(){
   for(int line=0;line<262;line++){
     if(line==241){ pStatus|=0x80; if(pCtrl&0x80) nmiPending=true; }
@@ -361,11 +406,11 @@ JNIEXPORT jint JNICALL Java_com_brruham_nes_NesCore_load(JNIEnv* env,jclass,jbyt
   chr.assign(d.begin()+off+ps,d.begin()+off+ps+cs);
   chrRam=(cb==0); prgBanks=pb; mapper=mp;
   mirrorMode=(f6&1)?1:0; if(mapper==7) mirrorMode=2;
-  resetAll();
+  resetAll(); cheatClear();
   return 0;
 }
 JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_reset(JNIEnv*,jclass){ if(!prg.empty()) resetAll(); }
-JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_runFrame(JNIEnv*,jclass){ if(!prg.empty()) emuFrame(); }
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_runFrame(JNIEnv*,jclass){ std::lock_guard<std::mutex> lk(mx); if(!prg.empty()) emuFrame(); }
 JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_getFrame(JNIEnv* env,jclass,jintArray out){
   env->SetIntArrayRegion(out,0,256*240,(const jint*)fb);
 }

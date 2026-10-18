@@ -17,7 +17,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint btxt = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final RectF dst = new RectF(), sel = new RectF(), sta = new RectF(), rom = new RectF(), tmp = new RectF();
+    private final RectF dst = new RectF(), sel = new RectF(), sta = new RectF(), rom = new RectF(), tmp = new RectF(), chb = new RectF();
     private float W, H, dcx, dcy, dr, ax, ay, bx, by, br;
     private volatile boolean running, surfaceOk, loaded, paused;
     private Thread thread;
@@ -65,7 +65,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         float bw = H * 0.2f, bh = H * 0.07f, g = H * 0.02f, bot = H - H * 0.04f;
         sel.set(W / 2 - bw - g, bot - bh, W / 2 - g, bot);
         sta.set(W / 2 + g, bot - bh, W / 2 + g + bw, bot);
-        rom.set(H * 0.03f, H * 0.03f, H * 0.19f, H * 0.03f + bh);
+        rom.set(H * 0.03f, H * 0.03f, H * 0.19f, H * 0.03f + bh); chb.set(H * 0.21f, H * 0.03f, H * 0.37f, H * 0.03f + bh);
         if (!running) redraw();
     }
 
@@ -117,7 +117,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         circle(c, bx, by, br, (p & 2) != 0, "B");
         rect(c, sel, (p & 4) != 0, "SELECT");
         rect(c, sta, (p & 8) != 0, "START");
-        rect(c, rom, false, "ROM");
+        & rect(c, chb, false, "CHEAT");
     }
 
     private void circle(Canvas c, float x, float y, float r, boolean on, String s) {
@@ -146,6 +146,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         if (act == MotionEvent.ACTION_DOWN || act == MotionEvent.ACTION_POINTER_DOWN) {
             int ai = e.getActionIndex();
             if (rom.contains(e.getX(ai), e.getY(ai))) { ((MainActivity) getContext()).pick(); return true; }
+            if (chb.contains(e.getX(ai), e.getY(ai))) { ((MainActivity) getContext()).cheat(); return true; }
         }
         int skip = (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_POINTER_UP) ? e.getActionIndex() : -1;
         int m = 0;
