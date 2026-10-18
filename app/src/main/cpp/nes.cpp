@@ -3,6 +3,14 @@
 #include <cstring>
 #include <vector>
 #include <mutex>
+#include <string>
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+#include "lualib.h"
+}
+static void luaFrame();
+static void luaStopAll();
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int8_t s8;
 
 // ---------- Cartridge / mapper (0,1,2,3,7) ----------
@@ -410,9 +418,113 @@ JNIEXPORT jint JNICALL Java_com_brruham_nes_NesCore_load(JNIEnv* env,jclass,jbyt
   return 0;
 }
 JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_reset(JNIEnv*,jclass){ if(!prg.empty()) resetAll(); }
-JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_runFrame(JNIEnv*,jclass){ std::lock_guard<std::mutex> lk(mx); if(!prg.empty()) emuFrame(); }
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_runFrame(JNIEnv*,jclass){ std::lock_guard<std::mutex> lk(mx); if(!prg.empty()){ luaFrame(); emuFrame(); } }
 JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_getFrame(JNIEnv* env,jclass,jintArray out){
   env->SetIntArrayRegion(out,0,256*240,(const jint*)fb);
 }
 JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_setInput(JNIEnv*,jclass,jint m){ padState=(u8)m; }
+}
+
+// ---------- Lua ----------
+static lua_State* LS=nullptr; static lua_State* CO=nullptr; static int coRef=LUA_NOREF;
+static bool luaActive=false; static long luaFrames=0; static int hookTicks=0;
+static std::mutex logmx; static std::string logbuf;
+static void llog(const std::string& s){
+  std::lock_guard<std::mutex> l(logmx);
+  logbuf+=s; logbuf+='\n';
+  if(logbuf.size()>8000) logbuf.erase(0,logbuf.size()-6000);
+}
+static u8 peekMem(int a){
+  if(a<0x2000) return ram[a&0x7FF];
+  if(a>=0x6000&&a<0x8000) return prgRam[a-0x6000];
+  if(a>=0x8000) return prgRead((u16)a);
+  return 0;
+}
+static int l_rb(lua_State* L){ int a=(int)(luaL_checkinteger(L,1)&0xFFFF); lua_pushinteger(L,peekMem(a)); return 1; }
+static int l_wb(lua_State* L){
+  int a=(int)(luaL_checkinteger(L,1)&0xFFFF); u8 v=(u8)(luaL_checkinteger(L,2)&0xFF);
+  if(a<0x2000) ram[a&0x7FF]=v; else if(a>=0x6000&&a<0x8000) prgRam[a-0x6000]=v;
+  return 0;
+}
+static int l_fa(lua_State* L){ return lua_yield(L,0); }
+static int l_fc(lua_State* L){ lua_pushinteger(L,luaFrames); return 1; }
+static int l_msg(lua_State* L){ llog(luaL_checkstring(L,1)); return 0; }
+static int l_jget(lua_State* L){
+  u8 p=padState; lua_newtable(L);
+  const char* n[8]={"A","B","select","start","up","down","left","right"};
+  for(int i=0;i<8;i++){ lua_pushboolean(L,(p>>i)&1); lua_setfield(L,-2,n[i]); }
+  return 1;
+}
+static int l_print(lua_State* L){
+  int n=lua_gettop(L); std::string s;
+  for(int i=1;i<=n;i++){
+    size_t len; const char* t=luaL_tolstring(L,i,&len);
+    if(i>1) s+='\t';
+    s.append(t,len); lua_pop(L,1);
+  }
+  llog(s); return 0;
+}
+static void hookFn(lua_State* L, lua_Debug*){
+  if(++hookTicks>=2) luaL_error(L,"script terlalu lama tanpa emu.frameadvance()");
+}
+static void luaStopAll(){
+  if(LS){ lua_close(LS); LS=nullptr; CO=nullptr; coRef=LUA_NOREF; }
+  luaActive=false;
+}
+static bool luaStart(const char* src){
+  luaStopAll();
+  LS=luaL_newstate();
+  if(!LS){ llog("Gagal membuat Lua"); return false; }
+  luaL_openlibs(LS);
+  lua_getglobal(LS,"os"); lua_pushnil(LS); lua_setfield(LS,-2,"exit"); lua_pop(LS,1);
+  lua_register(LS,"print",l_print);
+  static const luaL_Reg memf[]={{"readbyte",l_rb},{"writebyte",l_wb},{nullptr,nullptr}};
+  static const luaL_Reg emuf[]={{"frameadvance",l_fa},{"framecount",l_fc},{"message",l_msg},{nullptr,nullptr}};
+  static const luaL_Reg joyf[]={{"get",l_jget},{nullptr,nullptr}};
+  luaL_newlib(LS,memf); lua_setglobal(LS,"memory");
+  luaL_newlib(LS,emuf); lua_setglobal(LS,"emu");
+  luaL_newlib(LS,joyf); lua_setglobal(LS,"joypad");
+  if(luaL_loadstring(LS,src)!=LUA_OK){
+    const char* m=lua_tostring(LS,-1);
+    llog(std::string("Error sintaks: ")+(m?m:"?"));
+    luaStopAll(); return false;
+  }
+  lua_State* co=lua_newthread(LS);
+  lua_pushvalue(LS,-2); lua_xmove(LS,co,1);
+  coRef=luaL_ref(LS,LUA_REGISTRYINDEX);
+  lua_settop(LS,0);
+  CO=co;
+  lua_sethook(CO,hookFn,LUA_MASKCOUNT,1000000);
+  luaFrames=0; luaActive=true;
+  llog("Script dimulai");
+  return true;
+}
+static void luaFrame(){
+  if(!luaActive||!CO) return;
+  luaFrames++; hookTicks=0;
+  int nres=0;
+  int st=lua_resume(CO,LS,0,&nres);
+  if(st==LUA_YIELD){ lua_pop(CO,nres); }
+  else if(st==LUA_OK){ llog("Script selesai"); luaActive=false; }
+  else {
+    const char* m=lua_tostring(CO,-1);
+    llog(std::string("Error: ")+(m?m:"?"));
+    luaActive=false;
+  }
+}
+extern "C" {
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_luaRun(JNIEnv* env,jclass,jstring s){
+  const char* c=env->GetStringUTFChars(s,nullptr);
+  std::string src(c); env->ReleaseStringUTFChars(s,c);
+  std::lock_guard<std::mutex> l(mx); luaStart(src.c_str());
+}
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_luaStop(JNIEnv*,jclass){
+  std::lock_guard<std::mutex> l(mx); luaStopAll(); llog("Script dihentikan");
+}
+JNIEXPORT jstring JNICALL Java_com_brruham_nes_NesCore_luaLog(JNIEnv* env,jclass){
+  std::string s; { std::lock_guard<std::mutex> l(logmx); s.swap(logbuf); }
+  for(size_t i=0;i<s.size();i++) if((unsigned char)s[i]>0x7F) s[i]='?';
+  return env->NewStringUTF(s.c_str());
+}
+JNIEXPORT jboolean JNICALL Java_com_brruham_nes_NesCore_luaRunning(JNIEnv*,jclass){ return luaActive; }
 }

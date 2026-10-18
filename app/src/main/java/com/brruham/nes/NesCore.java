@@ -15,4 +15,8 @@ public class NesCore {
     public static native void freeze(int addr, int val, boolean on);
     public static native int[] freezeGet();
     public static native void freezeClear();
+    public static native void luaRun(String src);
+    public static native void luaStop();
+    public static native String luaLog();
+    public static native boolean luaRunning();
 }

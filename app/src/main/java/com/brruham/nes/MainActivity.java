@@ -29,6 +29,7 @@ public class MainActivity extends Activity {
         pick();
     }
 
+    void lua() { LuaPanel.show(this); }
     void pick() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -37,6 +38,7 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int rq, int rs, Intent d) {
+        if (rq == 2) { if (rs == RESULT_OK && d != null) LuaPanel.loadFile(this, d); return; }
         if (rq != 1 || rs != RESULT_OK || d == null) return;
         try {
             InputStream in = getContentResolver().openInputStream(d.getData());
