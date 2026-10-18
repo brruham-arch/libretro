@@ -65,7 +65,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         float bw = H * 0.2f, bh = H * 0.07f, g = H * 0.02f, bot = H - H * 0.04f;
         sel.set(W / 2 - bw - g, bot - bh, W / 2 - g, bot);
         sta.set(W / 2 + g, bot - bh, W / 2 + g + bw, bot);
-        rom.set(H * 0.03f, H * 0.03f, H * 0.19f, H * 0.03f + bh); & lub.set(H * 0.39f, H * 0.03f, H * 0.55f, H * 0.03f + bh);
+        rom.set(H * 0.03f, H * 0.03f, H * 0.19f, H * 0.03f + bh); chb.set(H * 0.21f, H * 0.03f, H * 0.37f, H * 0.03f + bh); lub.set(H * 0.39f, H * 0.03f, H * 0.55f, H * 0.03f + bh);
         if (!running) redraw();
     }
 
@@ -117,7 +117,8 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         circle(c, bx, by, br, (p & 2) != 0, "B");
         rect(c, sel, (p & 4) != 0, "SELECT");
         rect(c, sta, (p & 8) != 0, "START");
-        & rect(c, lub, false, "LUA");
+        rect(c, chb, false, "CHEAT");
+        rect(c, lub, false, "LUA");
     }
 
     private void circle(Canvas c, float x, float y, float r, boolean on, String s) {
