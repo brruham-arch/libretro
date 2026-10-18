@@ -19,4 +19,5 @@ public class NesCore {
     public static native void luaStop();
     public static native String luaLog();
     public static native boolean luaRunning();
+    public static native String guiGet();
 }

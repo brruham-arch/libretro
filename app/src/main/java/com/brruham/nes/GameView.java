@@ -6,6 +6,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.graphics.Typeface;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -17,9 +18,11 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint txt = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint btxt = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint gp = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF dst = new RectF(), sel = new RectF(), sta = new RectF(), rom = new RectF(), tmp = new RectF(), chb = new RectF(), lub = new RectF();
     private float W, H, dcx, dcy, dr, ax, ay, bx, by, br;
     private volatile boolean running, surfaceOk, loaded, paused;
+    private volatile String guiText = "";
     private Thread thread;
     private volatile int pad = 0;
 
@@ -32,6 +35,8 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         btxt.setColor(0xFF202020);
         btxt.setTextAlign(Paint.Align.CENTER);
         btxt.setFakeBoldText(true);
+        gp.setTypeface(Typeface.MONOSPACE);
+        gp.setFakeBoldText(true);
     }
 
     public void setLoaded(boolean v) { loaded = v; }
@@ -65,7 +70,9 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         float bw = H * 0.2f, bh = H * 0.07f, g = H * 0.02f, bot = H - H * 0.04f;
         sel.set(W / 2 - bw - g, bot - bh, W / 2 - g, bot);
         sta.set(W / 2 + g, bot - bh, W / 2 + g + bw, bot);
-        rom.set(H * 0.03f, H * 0.03f, H * 0.19f, H * 0.03f + bh); chb.set(H * 0.21f, H * 0.03f, H * 0.37f, H * 0.03f + bh); lub.set(H * 0.39f, H * 0.03f, H * 0.55f, H * 0.03f + bh);
+        rom.set(H * 0.03f, H * 0.03f, H * 0.19f, H * 0.03f + bh);
+        chb.set(H * 0.21f, H * 0.03f, H * 0.37f, H * 0.03f + bh);
+        lub.set(H * 0.39f, H * 0.03f, H * 0.55f, H * 0.03f + bh);
         if (!running) redraw();
     }
 
@@ -88,6 +95,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         while (running) {
             NesCore.runFrame();
             NesCore.getFrame(pix);
+            guiText = NesCore.guiGet();
             bmp.setPixels(pix, 0, 256, 0, 0, 256, 240);
             redraw();
             next += FRAME;
@@ -105,6 +113,23 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             txt.setTextSize(H * 0.06f);
             c.drawText("Tap ROM untuk membuka file .nes", W / 2, H / 2, txt);
         }
+        String gt = guiText;
+        if (loaded && gt != null && gt.length() > 0) {
+            float s = dst.width() / 256f;
+            gp.setTextSize(8f * s * 1.15f);
+            for (String ln : gt.split("\n")) {
+                String[] f = ln.split("\t", 4);
+                if (f.length < 4) continue;
+                try {
+                    float x = dst.left + Integer.parseInt(f[0]) * s;
+                    float y = dst.top + Integer.parseInt(f[1]) * s + 8f * s;
+                    gp.setColor(0xFF000000);
+                    c.drawText(f[3], x + s, y + s, gp);
+                    gp.setColor(0xFF000000 | Integer.parseInt(f[2]));
+                    c.drawText(f[3], x, y, gp);
+                } catch (NumberFormatException e) { }
+            }
+        }
         int p = pad;
         float t = dr * 0.38f;
         fill.setColor(0x33FFFFFF);
@@ -117,6 +142,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         circle(c, bx, by, br, (p & 2) != 0, "B");
         rect(c, sel, (p & 4) != 0, "SELECT");
         rect(c, sta, (p & 8) != 0, "START");
+        rect(c, rom, false, "ROM");
         rect(c, chb, false, "CHEAT");
         rect(c, lub, false, "LUA");
     }

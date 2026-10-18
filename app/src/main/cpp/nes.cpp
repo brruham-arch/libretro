@@ -11,6 +11,9 @@ extern "C" {
 }
 static void luaFrame();
 static void luaStopAll();
+static int l_jset(lua_State*);
+static int l_gt(lua_State*);
+static void guiClear();
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int8_t s8;
 
 // ---------- Cartridge / mapper (0,1,2,3,7) ----------
@@ -183,13 +186,14 @@ static void endLineUpdate(){
 // ---------- CPU bus ----------
 static u8 ram[2048];
 static volatile u8 padState=0; static u8 padShift=0; static bool padStrobe=false;
+static u8 padForceOn=0, padForceOff=0; static inline u8 padEff(){ u8 e=padState|padForceOn; return (e|padForceOff)^padForceOff; }
 static int stallCycles=0;
 static u16 pc; static u8 rA,rX,rY,rS,rP;
 
 static u8 rd(u16 a){
   if(a<0x2000) return ram[a&0x7FF];
   if(a<0x4000) return ppuRegRead(a&7);
-  if(a==0x4016){ u8 r; if(padStrobe) r=padState&1; else { r=padShift&1; padShift=(padShift>>1)|0x80; } return r|0x40; }
+  if(a==0x4016){ u8 r; if(padStrobe) r=padEff()&1; else { r=padShift&1; padShift=(padShift>>1)|0x80; } return r|0x40; }
   if(a<0x6000) return 0;
   if(a<0x8000) return prgRam[a-0x6000];
   return prgRead(a);
@@ -198,7 +202,7 @@ static void wr(u16 a,u8 v){
   if(a<0x2000){ ram[a&0x7FF]=v; return; }
   if(a<0x4000){ ppuRegWrite(a&7,v); return; }
   if(a==0x4014){ for(int i=0;i<256;i++) oam[(u8)(oamAddr+i)]=rd((v<<8)|i); stallCycles+=513; return; }
-  if(a==0x4016){ if(v&1) padStrobe=true; else { if(padStrobe) padShift=padState; padStrobe=false; } return; }
+  if(a==0x4016){ if(v&1) padStrobe=true; else { if(padStrobe) padShift=padEff(); padStrobe=false; } return; }
   if(a<0x6000) return;
   if(a<0x8000){ prgRam[a-0x6000]=v; return; }
   mapperWrite(a,v);
@@ -480,10 +484,10 @@ static bool luaStart(const char* src){
   lua_register(LS,"print",l_print);
   static const luaL_Reg memf[]={{"readbyte",l_rb},{"writebyte",l_wb},{nullptr,nullptr}};
   static const luaL_Reg emuf[]={{"frameadvance",l_fa},{"framecount",l_fc},{"message",l_msg},{nullptr,nullptr}};
-  static const luaL_Reg joyf[]={{"get",l_jget},{nullptr,nullptr}};
+  static const luaL_Reg joyf[]={{"get",l_jget},{"set",l_jset},{nullptr,nullptr}}; static const luaL_Reg guif[]={{"text",l_gt},{nullptr,nullptr}};
   luaL_newlib(LS,memf); lua_setglobal(LS,"memory");
   luaL_newlib(LS,emuf); lua_setglobal(LS,"emu");
-  luaL_newlib(LS,joyf); lua_setglobal(LS,"joypad");
+  luaL_newlib(LS,joyf); lua_setglobal(LS,"joypad"); luaL_newlib(LS,guif); lua_setglobal(LS,"gui");
   if(luaL_loadstring(LS,src)!=LUA_OK){
     const char* m=lua_tostring(LS,-1);
     llog(std::string("Error sintaks: ")+(m?m:"?"));
@@ -500,6 +504,7 @@ static bool luaStart(const char* src){
   return true;
 }
 static void luaFrame(){
+  padForceOn=padForceOff=0; guiClear();
   if(!luaActive||!CO) return;
   luaFrames++; hookTicks=0;
   int nres=0;
@@ -527,4 +532,45 @@ JNIEXPORT jstring JNICALL Java_com_brruham_nes_NesCore_luaLog(JNIEnv* env,jclass
   return env->NewStringUTF(s.c_str());
 }
 JNIEXPORT jboolean JNICALL Java_com_brruham_nes_NesCore_luaRunning(JNIEnv*,jclass){ return luaActive; }
+}
+
+// ---------- Lua tahap 2: joypad.set + gui.text ----------
+struct GuiTxt{ int x,y; int color; std::string t; };
+static std::vector<GuiTxt> guiList;
+static void guiClear(){ guiList.clear(); }
+static int l_jset(lua_State* L){
+  int port=(int)luaL_optinteger(L,1,1);
+  luaL_checktype(L,2,LUA_TTABLE);
+  if(port!=1) return 0;
+  const char* n[8]={"A","B","select","start","up","down","left","right"};
+  for(int i=0;i<8;i++){
+    lua_getfield(L,2,n[i]);
+    if(!lua_isnil(L,-1)){
+      if(lua_toboolean(L,-1)){ padForceOn|=(u8)(1<<i); padForceOff&=(u8)~(1<<i); }
+      else { padForceOff|=(u8)(1<<i); padForceOn&=(u8)~(1<<i); }
+    }
+    lua_pop(L,1);
+  }
+  return 0;
+}
+static int l_gt(lua_State* L){
+  int x=(int)luaL_checkinteger(L,1), y=(int)luaL_checkinteger(L,2);
+  size_t len; const char* s=luaL_tolstring(L,3,&len);
+  int col=0xFFFFFF; if(lua_isinteger(L,4)) col=(int)(lua_tointeger(L,4)&0xFFFFFF);
+  if(guiList.size()<64){ GuiTxt g; g.x=x; g.y=y; g.color=col; g.t.assign(s,len>128?128:len); guiList.push_back(g); }
+  return 0;
+}
+extern "C" {
+JNIEXPORT jstring JNICALL Java_com_brruham_nes_NesCore_guiGet(JNIEnv* env,jclass){
+  std::string o;
+  for(size_t i=0;i<guiList.size();i++){
+    std::string t=guiList[i].t;
+    for(size_t k=0;k<t.size();k++){
+      unsigned char ch=(unsigned char)t[k];
+      if(ch<0x20||ch>0x7E) t[k]=(ch=='\t'||ch=='\n')?' ':'?';
+    }
+    o+=std::to_string(guiList[i].x)+"\t"+std::to_string(guiList[i].y)+"\t"+std::to_string(guiList[i].color)+"\t"+t+"\n";
+  }
+  return env->NewStringUTF(o.c_str());
+}
 }
