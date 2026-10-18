@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.18)
+project(nes CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
+add_library(nes SHARED nes.cpp)
+target_link_libraries(nes log)
