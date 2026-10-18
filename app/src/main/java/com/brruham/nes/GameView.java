@@ -117,7 +117,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         circle(c, bx, by, br, (p & 2) != 0, "B");
         rect(c, sel, (p & 4) != 0, "SELECT");
         rect(c, sta, (p & 8) != 0, "START");
-        & rect(c, chb, false, "CHEAT");
+        rect(c, chb, false, "CHEAT");
     }
 
     private void circle(Canvas c, float x, float y, float r, boolean on, String s) {
