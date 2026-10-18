@@ -75,7 +75,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         Canvas c = null;
         try {
             c = getHolder().lockCanvas();
-            if (c != null) draw(c);
+            if (c != null) render(c);
         } catch (Exception e) {
         } finally {
             if (c != null) getHolder().unlockCanvasAndPost(c);
@@ -98,7 +98,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         }
     }
 
-    private void draw(Canvas c) {
+    private void render(Canvas c) {
         c.drawColor(Color.BLACK);
         if (loaded) c.drawBitmap(bmp, null, dst, game);
         else {
