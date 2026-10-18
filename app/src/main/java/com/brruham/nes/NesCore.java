@@ -6,6 +6,7 @@ public class NesCore {
     public static native void reset();
     public static native void runFrame();
     public static native void getFrame(int[] out);
+    public static native int getAudio(short[] out);
     public static native void setInput(int mask);
     public static native void searchReset();
     public static native int searchFilter(int mode, int val);

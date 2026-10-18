@@ -7,6 +7,9 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.AudioTrack;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -21,10 +24,12 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     private final Paint gp = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF dst = new RectF(), sel = new RectF(), sta = new RectF(), rom = new RectF(), tmp = new RectF(), chb = new RectF(), lub = new RectF();
     private float W, H, dcx, dcy, dr, ax, ay, bx, by, br;
+    private float tr, tax, tay, tbx, tby, tabx, taby;
     private volatile boolean running, surfaceOk, loaded, paused;
     private volatile String guiText = "";
     private Thread thread;
     private volatile int pad = 0;
+    private volatile int tm = 0;
 
     public GameView(Context c) {
         super(c);
@@ -67,6 +72,10 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         dst.set((W - gw) / 2, (H - gh) / 2, (W + gw) / 2, (H + gh) / 2);
         dr = H * 0.15f; dcx = dr * 1.9f; dcy = H - dr * 1.9f;
         br = H * 0.09f; ax = W - br * 1.8f; ay = H - br * 3.3f; bx = W - br * 4.8f; by = H - br * 1.9f;
+        tr = br * 0.75f;
+        tax = ax; tay = ay - br * 2.2f;
+        tbx = bx; tby = by - br * 2.2f;
+        tabx = bx - br * 2.5f; taby = by;
         float bw = H * 0.2f, bh = H * 0.07f, g = H * 0.02f, bot = H - H * 0.04f;
         sel.set(W / 2 - bw - g, bot - bh, W / 2 - g, bot);
         sta.set(W / 2 + g, bot - bh, W / 2 + g + bw, bot);
@@ -92,17 +101,34 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     @Override public void run() {
         final long FRAME = 16639267L;
         long next = System.nanoTime();
-        while (running) {
-            NesCore.runFrame();
-            NesCore.getFrame(pix);
-            guiText = NesCore.guiGet();
-            bmp.setPixels(pix, 0, 256, 0, 0, 256, 240);
-            redraw();
-            next += FRAME;
-            long now = System.nanoTime(), sl = next - now;
-            if (sl > 0) {
-                try { Thread.sleep(sl / 1000000L, (int) (sl % 1000000L)); } catch (InterruptedException e) { }
-            } else if (sl < -100000000L) next = now;
+        long fc = 0;
+        short[] ab = new short[4096];
+        AudioTrack at = null;
+        try {
+            int mb = AudioTrack.getMinBufferSize(44100, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            at = new AudioTrack(AudioManager.STREAM_MUSIC, 44100, AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT, Math.max(mb * 2, 8192), AudioTrack.MODE_STREAM);
+            at.play();
+        } catch (Exception e) { at = null; }
+        try {
+            while (running) {
+                int eff = pad | ((((fc++) >> 1) & 1) == 0 ? (tm & 3) : 0);
+                NesCore.setInput(eff);
+                NesCore.runFrame();
+                NesCore.getFrame(pix);
+                guiText = NesCore.guiGet();
+                int n = NesCore.getAudio(ab);
+                if (at != null && n > 0) at.write(ab, 0, n);
+                bmp.setPixels(pix, 0, 256, 0, 0, 256, 240);
+                redraw();
+                next += FRAME;
+                long now = System.nanoTime(), sl = next - now;
+                if (sl > 0) {
+                    try { Thread.sleep(sl / 1000000L, (int) (sl % 1000000L)); } catch (InterruptedException e) { }
+                } else if (sl < -100000000L) next = now;
+            }
+        } finally {
+            if (at != null) { try { at.stop(); } catch (Exception e) { } at.release(); }
         }
     }
 
@@ -131,15 +157,19 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             }
         }
         int p = pad;
-        float t = dr * 0.38f;
+        int t = tm;
+        float q = dr * 0.38f;
         fill.setColor(0x33FFFFFF);
         c.drawCircle(dcx, dcy, dr * 1.5f, fill);
-        tmp.set(dcx - t, dcy - dr * 1.35f, dcx + t, dcy - dr * 0.1f); rect(c, tmp, (p & 0x10) != 0, "");
-        tmp.set(dcx - t, dcy + dr * 0.1f, dcx + t, dcy + dr * 1.35f); rect(c, tmp, (p & 0x20) != 0, "");
-        tmp.set(dcx - dr * 1.35f, dcy - t, dcx - dr * 0.1f, dcy + t); rect(c, tmp, (p & 0x40) != 0, "");
-        tmp.set(dcx + dr * 0.1f, dcy - t, dcx + dr * 1.35f, dcy + t); rect(c, tmp, (p & 0x80) != 0, "");
+        tmp.set(dcx - q, dcy - dr * 1.35f, dcx + q, dcy - dr * 0.1f); rect(c, tmp, (p & 0x10) != 0, "");
+        tmp.set(dcx - q, dcy + dr * 0.1f, dcx + q, dcy + dr * 1.35f); rect(c, tmp, (p & 0x20) != 0, "");
+        tmp.set(dcx - dr * 1.35f, dcy - q, dcx - dr * 0.1f, dcy + q); rect(c, tmp, (p & 0x40) != 0, "");
+        tmp.set(dcx + dr * 0.1f, dcy - q, dcx + dr * 1.35f, dcy + q); rect(c, tmp, (p & 0x80) != 0, "");
         circle(c, ax, ay, br, (p & 1) != 0, "A");
         circle(c, bx, by, br, (p & 2) != 0, "B");
+        circle(c, tax, tay, tr, (t & 3) == 1, "TA");
+        circle(c, tbx, tby, tr, (t & 3) == 2, "TB");
+        circle(c, tabx, taby, tr, (t & 3) == 3, "TAB");
         rect(c, sel, (p & 4) != 0, "SELECT");
         rect(c, sta, (p & 8) != 0, "START");
         rect(c, rom, false, "ROM");
@@ -150,8 +180,8 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     private void circle(Canvas c, float x, float y, float r, boolean on, String s) {
         fill.setColor(on ? 0xAAFFFFFF : 0x55FFFFFF);
         c.drawCircle(x, y, r, fill);
-        btxt.setTextSize(r * 0.9f);
-        c.drawText(s, x, y + r * 0.32f, btxt);
+        btxt.setTextSize(r * (s.length() > 1 ? 0.7f : 0.9f));
+        c.drawText(s, x, y + r * 0.28f, btxt);
     }
 
     private void rect(Canvas c, RectF r, boolean on, String s) {
@@ -177,7 +207,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             if (lub.contains(e.getX(ai), e.getY(ai))) { ((MainActivity) getContext()).lua(); return true; }
         }
         int skip = (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_POINTER_UP) ? e.getActionIndex() : -1;
-        int m = 0;
+        int m = 0, t = 0;
         if (act != MotionEvent.ACTION_CANCEL) {
             for (int i = 0; i < e.getPointerCount(); i++) {
                 if (i == skip) continue;
@@ -189,12 +219,15 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
                 }
                 if (hit(x, y, ax, ay, br * 1.3f)) m |= 1;
                 if (hit(x, y, bx, by, br * 1.3f)) m |= 2;
+                if (hit(x, y, tax, tay, tr * 1.3f)) t |= 1;
+                if (hit(x, y, tbx, tby, tr * 1.3f)) t |= 2;
+                if (hit(x, y, tabx, taby, tr * 1.3f)) t |= 3;
                 if (sel.contains(x, y)) m |= 4;
                 if (sta.contains(x, y)) m |= 8;
             }
         }
         pad = m;
-        NesCore.setInput(m);
+        tm = t;
         if (!running) redraw();
         return true;
     }

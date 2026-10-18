@@ -15,6 +15,7 @@ static int l_jset(lua_State*);
 static int l_gt(lua_State*);
 static void guiClear();
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int8_t s8;
+#include "apu.h"
 
 // ---------- Cartridge / mapper (0,1,2,3,7) ----------
 static std::vector<u8> prg, chr;
@@ -194,6 +195,7 @@ static u8 rd(u16 a){
   if(a<0x2000) return ram[a&0x7FF];
   if(a<0x4000) return ppuRegRead(a&7);
   if(a==0x4016){ u8 r; if(padStrobe) r=padEff()&1; else { r=padShift&1; padShift=(padShift>>1)|0x80; } return r|0x40; }
+  if(a==0x4015) return apuStatus();
   if(a<0x6000) return 0;
   if(a<0x8000) return prgRam[a-0x6000];
   return prgRead(a);
@@ -201,6 +203,7 @@ static u8 rd(u16 a){
 static void wr(u16 a,u8 v){
   if(a<0x2000){ ram[a&0x7FF]=v; return; }
   if(a<0x4000){ ppuRegWrite(a&7,v); return; }
+  if((a>=0x4000&&a<=0x4013)||a==0x4015||a==0x4017){ apuWrite(a,v); return; }
   if(a==0x4014){ for(int i=0;i<256;i++) oam[(u8)(oamAddr+i)]=rd((v<<8)|i); stallCycles+=513; return; }
   if(a==0x4016){ if(v&1) padStrobe=true; else { if(padStrobe) padShift=padEff(); padStrobe=false; } return; }
   if(a<0x6000) return;
@@ -385,7 +388,7 @@ JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_freezeClear(JNIEnv*,jclass){
   std::lock_guard<std::mutex> l(mx); frz.clear(); }
 }
 static int dotBudget=0;
-static void runDots(int n){ dotBudget+=n; while(dotBudget>0){ dotBudget-=3*cpuStep(); applyFreeze(); } }
+static void runDots(int n){ dotBudget+=n; while(dotBudget>0){ int c_=cpuStep(); apuClock(c_); dotBudget-=3*c_; applyFreeze(); } }
 static void emuFrame(){
   for(int line=0;line<262;line++){
     if(line==241){ pStatus|=0x80; if(pCtrl&0x80) nmiPending=true; }
@@ -400,6 +403,7 @@ static void resetAll(){
   bankReg=chrReg=0; mShift=0x10; mCtrl=0x0C; mChr0=mChr1=mPrg=0;
   vAddr=tAddr=0; fineX=0; wLatch=false; pCtrl=pMask=pStatus=oamAddr=readBuf=0;
   nmiPending=false; dotBudget=0; stallCycles=0; padStrobe=false; padShift=0;
+  apuReset();
   rA=rX=rY=0; rS=0xFD; rP=0x24; pc=rd16(0xFFFC);
 }
 
