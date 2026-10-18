@@ -344,7 +344,7 @@ JNIEXPORT jint JNICALL Java_com_brruham_nes_NesCore_searchFilter(JNIEnv*,jclass,
   for(int i=0;i<2048;i++){
     if(!cand[i]) continue;
     u8 c=ram[i], p=snap[i]; bool ok;
-    switch(mode){ case 0: ok=(c==(u8)val); break; case 1: ok=(c!=p); break; case 2: ok=(c==p); break; case 3: ok=(c>p); break; default: ok=(c<p); }
+    switch(mode){ case 0: ok=(c==(u8)val); break; case 1: ok=(c!=p); break; case 2: ok=(c==p); break; case 3: ok=(c>p); break; case 4: ok=(c<p); break; case 5: ok=(c>val); break; case 6: ok=(c<val); break; case 7: ok=(c!=val); break; case 8: ok=(c>p && c-p==val); break; case 9: ok=(p>c && p-c==val); break; case 10: { int lo=(val>>8)&255, hi=val&255; if(lo>hi){int t=lo;lo=hi;hi=t;} ok=(c>=lo && c<=hi); break; } default: ok=false; }
     cand[i]=ok; if(ok) n++;
   }
   memcpy(snap,ram,2048); return n; }

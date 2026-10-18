@@ -18,7 +18,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 
 public class MainActivity extends Activity {
-    private GameView view;
+    private GameView view; private EditText val2;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -84,8 +84,8 @@ public class MainActivity extends Activity {
     private Button filt(final Context cx, String t, final int mode, final EditText val, final Runnable[] ref) {
         return btn(cx, t, x -> {
             int v = num(val);
-            if (mode == 0 && v < 0) { Toast.makeText(cx, "Isi nilai dulu", Toast.LENGTH_SHORT).show(); return; }
-            int r = NesCore.searchFilter(mode, Math.max(v, 0));
+            if ((mode == 0 || (mode >= 5 && mode <= 9)) && v < 0) { Toast.makeText(cx, "Isi nilai dulu", Toast.LENGTH_SHORT).show(); return; }
+            if (mode == 10 && (v < 0 || num(val2) < 0)) { Toast.makeText(cx, "Isi Nilai dan Nilai 2", Toast.LENGTH_SHORT).show(); return; } int r = NesCore.searchFilter(mode, mode == 10 ? (v << 8) | num(val2) : Math.max(v, 0));
             if (r < 0) Toast.makeText(cx, "Tekan MULAI BARU dulu", Toast.LENGTH_SHORT).show();
             ref[0].run();
         });
@@ -106,7 +106,7 @@ public class MainActivity extends Activity {
         final EditText val = new EditText(cx);
         val.setHint("Nilai 0-255");
         val.setInputType(InputType.TYPE_CLASS_NUMBER);
-        val.setSingleLine(true);
+        val.setSingleLine(true); val2 = new EditText(cx); val2.setHint("Nilai 2 (khusus ANTARA)"); val2.setInputType(InputType.TYPE_CLASS_NUMBER); val2.setSingleLine(true);
         final TextView info = new TextView(cx);
         final LinearLayout list = new LinearLayout(cx);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -145,18 +145,18 @@ public class MainActivity extends Activity {
             }
         };
 
-        LinearLayout r1 = row(cx), r2 = row(cx);
+        LinearLayout r1 = row(cx), r2 = row(cx), r3 = row(cx), r4 = row(cx);
         addW(r1, btn(cx, "MULAI BARU", x -> { NesCore.searchReset(); ref[0].run(); }), 1f);
         addW(r1, filt(cx, "SAMA=NILAI", 0, val, ref), 1f);
         addW(r2, filt(cx, "BERUBAH", 1, val, ref), 1f);
         addW(r2, filt(cx, "TETAP", 2, val, ref), 1f);
         addW(r2, filt(cx, "NAIK", 3, val, ref), 1f);
-        addW(r2, filt(cx, "TURUN", 4, val, ref), 1f);
+        addW(r2, filt(cx, "TURUN", 4, val, ref), 1f); addW(r3, filt(cx, "LEBIH >N", 5, val, ref), 1f); addW(r3, filt(cx, "KURANG <N", 6, val, ref), 1f); addW(r3, filt(cx, "BEDA !=N", 7, val, ref), 1f); addW(r4, filt(cx, "NAIK +N", 8, val, ref), 1f); addW(r4, filt(cx, "TURUN -N", 9, val, ref), 1f); addW(r4, filt(cx, "ANTARA", 10, val, ref), 1f);
 
         root.addView(hint);
-        root.addView(val);
+        root.addView(val); root.addView(val2);
         root.addView(r1);
-        root.addView(r2);
+        root.addView(r2); root.addView(r3); root.addView(r4);
         root.addView(info);
         root.addView(list);
 
