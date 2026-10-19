@@ -27,6 +27,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
     private float tr, tax, tay, tbx, tby, tabx, taby;
     private volatile boolean running, surfaceOk, loaded, paused;
     private volatile String guiText = "";
+    private volatile String heldBtn = null;
     private Thread thread;
     private volatile int pad = 0;
     private volatile int tm = 0;
@@ -132,6 +133,64 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
         }
     }
 
+    private void drawGui(Canvas c) {
+        String gt = guiText;
+        if (!loaded || gt == null || gt.length() == 0) return;
+        float s = dst.width() / 256f;
+        gp.setTextSize(8f * s * 1.15f);
+        for (String ln : gt.split("\n")) {
+            String[] f = ln.split("\t");
+            try {
+                if (f[0].equals("T") && f.length >= 5) {
+                    float x = dst.left + Integer.parseInt(f[1]) * s;
+                    float y = dst.top + Integer.parseInt(f[2]) * s + 8f * s;
+                    gp.setColor(0xFF000000);
+                    c.drawText(f[4], x + s, y + s, gp);
+                    gp.setColor(0xFF000000 | Integer.parseInt(f[3]));
+                    c.drawText(f[4], x, y, gp);
+                } else if (f[0].equals("R") && f.length >= 7) {
+                    float x = dst.left + Integer.parseInt(f[1]) * s;
+                    float y = dst.top + Integer.parseInt(f[2]) * s;
+                    float w = Integer.parseInt(f[3]) * s, h = Integer.parseInt(f[4]) * s;
+                    fill.setColor(((Integer.parseInt(f[6]) & 255) << 24) | (Integer.parseInt(f[5]) & 0xFFFFFF));
+                    tmp.set(x, y, x + w, y + h);
+                    c.drawRect(tmp, fill);
+                } else if (f[0].equals("B") && f.length >= 7) {
+                    float x = dst.left + Integer.parseInt(f[1]) * s;
+                    float y = dst.top + Integer.parseInt(f[2]) * s;
+                    float w = Integer.parseInt(f[3]) * s, h = Integer.parseInt(f[4]) * s;
+                    boolean on = f[6].equals(heldBtn);
+                    fill.setColor((on ? 0xEE000000 : 0xA0000000) | (Integer.parseInt(f[5]) & 0xFFFFFF));
+                    tmp.set(x, y, x + w, y + h);
+                    c.drawRoundRect(tmp, 12, 12, fill);
+                    float ts = h * 0.5f;
+                    btxt.setTextSize(ts);
+                    float tw = btxt.measureText(f[6]);
+                    if (tw > w * 0.92f) { ts = ts * w * 0.92f / tw; btxt.setTextSize(ts); }
+                    c.drawText(f[6], tmp.centerX(), tmp.centerY() + ts * 0.33f, btxt);
+                }
+            } catch (NumberFormatException e) { }
+        }
+    }
+
+    private String hitButton(float tx, float ty) {
+        String gt = guiText;
+        if (!loaded || gt == null || gt.length() == 0) return null;
+        float s = dst.width() / 256f;
+        String hit = null;
+        for (String ln : gt.split("\n")) {
+            String[] f = ln.split("\t");
+            if (f.length < 7 || !f[0].equals("B")) continue;
+            try {
+                float x = dst.left + Integer.parseInt(f[1]) * s;
+                float y = dst.top + Integer.parseInt(f[2]) * s;
+                float w = Integer.parseInt(f[3]) * s, h = Integer.parseInt(f[4]) * s;
+                if (tx >= x && tx <= x + w && ty >= y && ty <= y + h) hit = f[6];
+            } catch (NumberFormatException e) { }
+        }
+        return hit;
+    }
+
     private void render(Canvas c) {
         c.drawColor(Color.BLACK);
         if (loaded) c.drawBitmap(bmp, null, dst, game);
@@ -139,23 +198,7 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
             txt.setTextSize(H * 0.06f);
             c.drawText("Tap ROM untuk membuka file .nes", W / 2, H / 2, txt);
         }
-        String gt = guiText;
-        if (loaded && gt != null && gt.length() > 0) {
-            float s = dst.width() / 256f;
-            gp.setTextSize(8f * s * 1.15f);
-            for (String ln : gt.split("\n")) {
-                String[] f = ln.split("\t", 4);
-                if (f.length < 4) continue;
-                try {
-                    float x = dst.left + Integer.parseInt(f[0]) * s;
-                    float y = dst.top + Integer.parseInt(f[1]) * s + 8f * s;
-                    gp.setColor(0xFF000000);
-                    c.drawText(f[3], x + s, y + s, gp);
-                    gp.setColor(0xFF000000 | Integer.parseInt(f[2]));
-                    c.drawText(f[3], x, y, gp);
-                } catch (NumberFormatException e) { }
-            }
-        }
+        drawGui(c);
         int p = pad;
         int t = tm;
         float q = dr * 0.38f;
@@ -200,11 +243,15 @@ public class GameView extends SurfaceView implements SurfaceHolder.Callback, Run
 
     @Override public boolean onTouchEvent(MotionEvent e) {
         int act = e.getActionMasked();
+        if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_POINTER_UP || act == MotionEvent.ACTION_CANCEL) heldBtn = null;
         if (act == MotionEvent.ACTION_DOWN || act == MotionEvent.ACTION_POINTER_DOWN) {
             int ai = e.getActionIndex();
-            if (rom.contains(e.getX(ai), e.getY(ai))) { ((MainActivity) getContext()).pick(); return true; }
-            if (chb.contains(e.getX(ai), e.getY(ai))) { ((MainActivity) getContext()).cheat(); return true; }
-            if (lub.contains(e.getX(ai), e.getY(ai))) { ((MainActivity) getContext()).lua(); return true; }
+            float tx = e.getX(ai), ty = e.getY(ai);
+            if (rom.contains(tx, ty)) { ((MainActivity) getContext()).pick(); return true; }
+            if (chb.contains(tx, ty)) { ((MainActivity) getContext()).cheat(); return true; }
+            if (lub.contains(tx, ty)) { ((MainActivity) getContext()).lua(); return true; }
+            String hb = hitButton(tx, ty);
+            if (hb != null) { heldBtn = hb; NesCore.guiTap(hb); return true; }
         }
         int skip = (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_POINTER_UP) ? e.getActionIndex() : -1;
         int m = 0, t = 0;

@@ -13,6 +13,9 @@ static void luaFrame();
 static void luaStopAll();
 static int l_jset(lua_State*);
 static int l_gt(lua_State*);
+static int l_gb(lua_State*);
+static int l_gx(lua_State*);
+static void tapSwap();
 static void guiClear();
 typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32; typedef int8_t s8;
 #include "apu.h"
@@ -488,7 +491,7 @@ static bool luaStart(const char* src){
   lua_register(LS,"print",l_print);
   static const luaL_Reg memf[]={{"readbyte",l_rb},{"writebyte",l_wb},{nullptr,nullptr}};
   static const luaL_Reg emuf[]={{"frameadvance",l_fa},{"framecount",l_fc},{"message",l_msg},{nullptr,nullptr}};
-  static const luaL_Reg joyf[]={{"get",l_jget},{"set",l_jset},{nullptr,nullptr}}; static const luaL_Reg guif[]={{"text",l_gt},{nullptr,nullptr}};
+  static const luaL_Reg joyf[]={{"get",l_jget},{"set",l_jset},{nullptr,nullptr}}; static const luaL_Reg guif[]={{"text",l_gt},{"button",l_gb},{"box",l_gx},{nullptr,nullptr}};
   luaL_newlib(LS,memf); lua_setglobal(LS,"memory");
   luaL_newlib(LS,emuf); lua_setglobal(LS,"emu");
   luaL_newlib(LS,joyf); lua_setglobal(LS,"joypad"); luaL_newlib(LS,guif); lua_setglobal(LS,"gui");
@@ -508,7 +511,7 @@ static bool luaStart(const char* src){
   return true;
 }
 static void luaFrame(){
-  padForceOn=padForceOff=0; guiClear();
+  padForceOn=padForceOff=0; guiClear(); tapSwap();
   if(!luaActive||!CO) return;
   luaFrames++; hookTicks=0;
   int nres=0;
@@ -538,10 +541,21 @@ JNIEXPORT jstring JNICALL Java_com_brruham_nes_NesCore_luaLog(JNIEnv* env,jclass
 JNIEXPORT jboolean JNICALL Java_com_brruham_nes_NesCore_luaRunning(JNIEnv*,jclass){ return luaActive; }
 }
 
-// ---------- Lua tahap 2: joypad.set + gui.text ----------
-struct GuiTxt{ int x,y; int color; std::string t; };
-static std::vector<GuiTxt> guiList;
+// ---------- Lua tahap 3: gui.text / gui.box / gui.button ----------
+struct GuiItem{ char k; int x,y,w,h; int color; int a; std::string t; };
+static std::vector<GuiItem> guiList;
+static std::mutex tapmx;
+static std::vector<std::string> tapIn, tapNow;
 static void guiClear(){ guiList.clear(); }
+static void tapSwap(){ std::lock_guard<std::mutex> l(tapmx); tapNow.swap(tapIn); tapIn.clear(); }
+static std::string san(const std::string& in,size_t mx_){
+  std::string t=in.substr(0,mx_);
+  for(size_t k=0;k<t.size();k++){
+    unsigned char ch=(unsigned char)t[k];
+    if(ch<0x20||ch>0x7E) t[k]=(ch=='\t'||ch=='\n')?' ':'?';
+  }
+  return t;
+}
 static int l_jset(lua_State* L){
   int port=(int)luaL_optinteger(L,1,1);
   luaL_checktype(L,2,LUA_TTABLE);
@@ -557,24 +571,63 @@ static int l_jset(lua_State* L){
   }
   return 0;
 }
+// gui.text(x,y,teks[,warna])
 static int l_gt(lua_State* L){
-  int x=(int)luaL_checkinteger(L,1), y=(int)luaL_checkinteger(L,2);
+  int x=(int)luaL_checknumber(L,1), y=(int)luaL_checknumber(L,2);
   size_t len; const char* s=luaL_tolstring(L,3,&len);
   int col=0xFFFFFF; if(lua_isinteger(L,4)) col=(int)(lua_tointeger(L,4)&0xFFFFFF);
-  if(guiList.size()<64){ GuiTxt g; g.x=x; g.y=y; g.color=col; g.t.assign(s,len>128?128:len); guiList.push_back(g); }
+  if(guiList.size()<96){
+    GuiItem g; g.k='T'; g.x=x; g.y=y; g.w=g.h=0; g.color=col; g.a=255; g.t=san(std::string(s,len),128);
+    guiList.push_back(g);
+  }
   return 0;
+}
+// gui.box(x,y,w,h,warna[,alpha 0-255])
+static int l_gx(lua_State* L){
+  int x=(int)luaL_checknumber(L,1), y=(int)luaL_checknumber(L,2);
+  int w=(int)luaL_checknumber(L,3), h=(int)luaL_checknumber(L,4);
+  int col=(int)(luaL_optinteger(L,5,0)&0xFFFFFF);
+  int al=(int)luaL_optinteger(L,6,128); if(al<0) al=0; if(al>255) al=255;
+  if(guiList.size()<96){
+    GuiItem g; g.k='R'; g.x=x; g.y=y; g.w=w; g.h=h; g.color=col; g.a=al;
+    guiList.push_back(g);
+  }
+  return 0;
+}
+// gui.button(x,y,w,h,label[,warna]) -> true pada frame saat ditekan
+static int l_gb(lua_State* L){
+  int x=(int)luaL_checknumber(L,1), y=(int)luaL_checknumber(L,2);
+  int w=(int)luaL_checknumber(L,3), h=(int)luaL_checknumber(L,4);
+  size_t len; const char* s=luaL_checklstring(L,5,&len);
+  int col=(int)(luaL_optinteger(L,6,0xFFFFFF)&0xFFFFFF);
+  std::string lb=san(std::string(s,len),32);
+  bool hit=false;
+  for(size_t i=0;i<tapNow.size();i++) if(tapNow[i]==lb) hit=true;
+  if(guiList.size()<96){
+    GuiItem g; g.k='B'; g.x=x; g.y=y; g.w=w; g.h=h; g.color=col; g.a=255; g.t=lb;
+    guiList.push_back(g);
+  }
+  lua_pushboolean(L,hit);
+  return 1;
 }
 extern "C" {
 JNIEXPORT jstring JNICALL Java_com_brruham_nes_NesCore_guiGet(JNIEnv* env,jclass){
   std::string o;
   for(size_t i=0;i<guiList.size();i++){
-    std::string t=guiList[i].t;
-    for(size_t k=0;k<t.size();k++){
-      unsigned char ch=(unsigned char)t[k];
-      if(ch<0x20||ch>0x7E) t[k]=(ch=='\t'||ch=='\n')?' ':'?';
-    }
-    o+=std::to_string(guiList[i].x)+"\t"+std::to_string(guiList[i].y)+"\t"+std::to_string(guiList[i].color)+"\t"+t+"\n";
+    const GuiItem& g=guiList[i];
+    std::string x=std::to_string(g.x)+"\t", y=std::to_string(g.y)+"\t";
+    std::string w=std::to_string(g.w)+"\t", h=std::to_string(g.h)+"\t";
+    std::string c=std::to_string(g.color)+"\t";
+    if(g.k=='T') o+="T\t"+x+y+c+g.t+"\n";
+    else if(g.k=='R') o+="R\t"+x+y+w+h+c+std::to_string(g.a)+"\n";
+    else o+="B\t"+x+y+w+h+c+g.t+"\n";
   }
   return env->NewStringUTF(o.c_str());
+}
+JNIEXPORT void JNICALL Java_com_brruham_nes_NesCore_guiTap(JNIEnv* env,jclass,jstring s){
+  const char* c=env->GetStringUTFChars(s,nullptr);
+  std::string t(c); env->ReleaseStringUTFChars(s,c);
+  std::lock_guard<std::mutex> l(tapmx);
+  if(tapIn.size()<16) tapIn.push_back(t);
 }
 }
